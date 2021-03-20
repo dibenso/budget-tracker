@@ -1,7 +1,56 @@
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js");
-
 let transactions = [];
 let myChart;
+let db;
+let dbReq = indexedDB.open("transactionsDB", 1);
+
+dbReq.onupgradeneeded = event => {
+  db = event.target.result;
+  db.createObjectStore("transactions", { autoIncrement: true });
+}
+
+dbReq.onsuccess = event => {
+  db = event.target.result;
+}
+
+function saveRecord(transaction) {
+  const tx = db.transaction(["transactions"], "readwrite");
+  const store = tx.objectStore("transactions");
+  
+  store.add(transaction);
+}
+
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js");
+
+window.addEventListener("online", () => {
+  const tx = db.transaction(["transactions"], "readonly");
+  const store = tx.objectStore("transactions");
+  const req = store.openCursor();
+  const cachedTransactions = [];
+
+  req.onsuccess = event => {
+    const cursor = event.target.result;
+
+    if(cursor) {
+      cachedTransactions.push(cursor.value);
+      cursor.continue();
+    } else {
+      fetch("/api/transaction/bulk", {
+        method: "POST",
+        body: JSON.stringify(cachedTransactions),
+        headers: {
+          Accept: "application/json, text/plain, */*",
+          "Content-Type": "application/json"
+        }
+      })
+      .then(response => response.json())
+      .then(data => {
+        db.transaction(["transactions"], "readwrite").objectStore("transactions").clear();
+
+        transactions = data;
+      });
+    }
+  }
+});
 
 fetch("/api/transaction")
   .then(response => {
